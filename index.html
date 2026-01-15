@@ -1,0 +1,620 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TEST | Full Stack Portfolio</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        cyber: '#22d3ee', // Cyan-400
+                        dark: '#0f172a',  // Slate-900
+                    },
+                    fontFamily: {
+                        mono: ['ui-monospace', 'SFMono-Regular', 'Menlo', 'Monaco', 'Consolas', "Liberation Mono", "Courier New", 'monospace'],
+                    }
+                }
+            }
+        }
+    </script>
+
+    <!-- Three.js -->
+    <script src="https://unpkg.com/three@0.160.0/build/three.min.js"></script>
+
+    <!-- Ruby WASM -->
+    <script src="https://cdn.jsdelivr.net/npm/@ruby/3.2-wasm-wasi@2.4.1/dist/browser.script.iife.js"></script>
+
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #0f172a;
+            color: #e2e8f0;
+        }
+        #canvas-container {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 0;
+        }
+        #ui-layer {
+            position: relative;
+            z-index: 10;
+            width: 100%;
+            height: 100vh;
+            pointer-events: none; /* Let clicks pass through to canvas if needed, but we usually want UI clickable */
+            display: flex;
+            flex-direction: column;
+        }
+        /* Enable pointer events for actual UI elements */
+        #ui-layer > * {
+            pointer-events: auto;
+        }
+        
+        .glass-panel {
+            background: rgba(15, 23, 42, 0.7);
+            backdrop-filter: blur(8px);
+            border: 1px solid rgba(34, 211, 238, 0.2);
+        }
+
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #0f172a; 
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #334155; 
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #22d3ee; 
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Capa Fondo 3D -->
+    <div id="canvas-container"></div>
+
+    <!-- Capa UI -->
+    <div id="ui-layer">
+        <!-- Navegación Placeholder -->
+        <nav class="w-full p-6 flex justify-between items-center glass-panel sticky top-0">
+            <h1 class="text-2xl font-mono font-bold text-cyber">&lt;TEST /&gt;</h1>
+            <div id="nav-links" class="space-x-4 font-mono text-sm">
+                <!-- Links will be injected by Ruby -->
+            </div>
+        </nav>
+
+        <!-- Contenido Principal -->
+        <main id="main-content" class="flex-grow overflow-y-auto p-8 flex flex-col items-center justify-center">
+            <div class="animate-pulse text-cyber font-mono">Loading Neural Core (Ruby WASM)...</div>
+        </main>
+        
+        <!-- Footer -->
+        <footer class="w-full p-4 text-center text-xs text-slate-500 font-mono glass-panel flex flex-col md:flex-row justify-center items-center gap-2 md:gap-4 z-20 relative">
+            <span>System Status: <span id="status-indicator" class="text-green-500">ONLINE</span> | Architecture: Ruby WASM + Three.js</span>
+            <button id="term-toggle-btn" class="text-slate-400 hover:text-cyber transition-colors text-xs border border-slate-700 px-3 py-1 rounded bg-slate-900/50">>_ TERMINAL</button>
+        </footer>
+
+        <!-- Terminal REPL (Hidden by default) -->
+        <div id="terminal-wrapper" class="hidden fixed bottom-0 left-0 w-full md:absolute md:bottom-10 md:left-10 md:w-full md:max-w-lg h-64 bg-slate-900/95 border-t md:border border-green-500/50 rounded-t-lg md:rounded-lg shadow-2xl flex flex-col font-mono text-xs overflow-hidden backdrop-blur-xl z-50 transition-all duration-300 transform translate-y-0">
+            <div class="bg-slate-800 p-2 flex justify-between items-center border-b border-slate-700">
+                <span class="text-green-400">root@TEST-wasm:~</span>
+                <button id="term-close-btn" class="text-red-400 hover:text-white px-2">✕</button>
+            </div>
+            <div id="term-output" class="flex-grow p-4 overflow-y-auto text-slate-300 space-y-1">
+                <div class="text-slate-500"># Interactive Ruby Shell (IRB) for WebAssembly</div>
+                <div class="text-slate-500"># Try: 'chaos', 'calm', 'speed=5', 'color "#ff0000"'</div>
+            </div>
+            <div class="p-2 bg-black/50 flex items-center border-t border-slate-700">
+                <span class="text-green-500 mr-2">➜</span>
+                <input type="text" id="term-input" class="bg-transparent border-none outline-none text-white w-full font-mono" placeholder="..." autocomplete="off">
+            </div>
+        </div>
+    </div>
+
+    <!-- CÓDIGO JAVASCRIPT (El Cuerpo) -->
+    <script>
+        // Global storage for mouse position
+        window.mouse = { x: 0, y: 0 };
+        
+        // Update mouse position
+        document.addEventListener('mousemove', (event) => {
+            // Normalize to -1 to 1
+            window.mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+            window.mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+        });
+
+        // --- Three.js Setup ---
+        const scene = new THREE.Scene();
+        // Fog for depth
+        scene.fog = new THREE.FogExp2(0x0f172a, 0.002);
+
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.z = 30;
+
+        const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(window.devicePixelRatio);
+        document.getElementById('canvas-container').appendChild(renderer.domElement);
+
+        // --- Neural Network Visuals ---
+        const particleGroup = new THREE.Group();
+        scene.add(particleGroup);
+
+        // Create particles
+        const particleCount = 200; // Adjust for density
+        const geometry = new THREE.BufferGeometry();
+        const positions = [];
+        const n = 40; // Spread radius
+
+        for (let i = 0; i < particleCount; i++) {
+            const x = (Math.random() - 0.5) * n;
+            const y = (Math.random() - 0.5) * n;
+            const z = (Math.random() - 0.5) * n;
+            positions.push(x, y, z);
+        }
+
+        geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+
+        // Points material
+        const pointsMaterial = new THREE.PointsMaterial({
+            color: 0x22d3ee,
+            size: 0.3,
+            transparent: true,
+            opacity: 0.8
+        });
+
+        const particles = new THREE.Points(geometry, pointsMaterial);
+        particleGroup.add(particles);
+
+        // Lines (Connections)
+        // We will create lines between close particles.
+        // For performance, we'll use a simplified approach or just a wireframe wrapper
+        // But the prompt asked for "Connected by lines". 
+        // Let's generate a LineSegments geometry based on distance.
+        
+        const lineGeometry = new THREE.BufferGeometry();
+        const linePositions = [];
+        
+        // Brute force connection generation (okay for 200 particles)
+        const posArray = geometry.attributes.position.array;
+        const connectDistance = 6;
+
+        for (let i = 0; i < particleCount; i++) {
+            for (let j = i + 1; j < particleCount; j++) {
+                const x1 = posArray[i * 3];
+                const y1 = posArray[i * 3 + 1];
+                const z1 = posArray[i * 3 + 2];
+
+                const x2 = posArray[j * 3];
+                const y2 = posArray[j * 3 + 1];
+                const z2 = posArray[j * 3 + 2];
+
+                const dist = Math.sqrt(Math.pow(x1-x2, 2) + Math.pow(y1-y2, 2) + Math.pow(z1-z2, 2));
+
+                if (dist < connectDistance) {
+                    linePositions.push(x1, y1, z1);
+                    linePositions.push(x2, y2, z2);
+                }
+            }
+        }
+
+        lineGeometry.setAttribute('position', new THREE.Float32BufferAttribute(linePositions, 3));
+        const lineMaterial = new THREE.LineBasicMaterial({
+            color: 0x22d3ee,
+            transparent: true,
+            opacity: 0.15
+        });
+
+        const lines = new THREE.LineSegments(lineGeometry, lineMaterial);
+        particleGroup.add(lines);
+
+
+        // Resize handler
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        // --- Dumb Helpers for Ruby ---
+
+        // --- Minimized JS Layer ---
+
+        // 1. Render Frame (Called by Ruby loop)
+        window.renderFrame = (rotX, rotY) => {
+            particleGroup.rotation.x = rotX;
+            particleGroup.rotation.y = rotY;
+            renderer.render(scene, camera);
+        };
+
+        // 2. DOM Utilities (The Bridge)
+        window.domHelper = {
+            setHtml: (id, html) => {
+                const el = document.getElementById(id);
+                if (el) el.innerHTML = html;
+            },
+            addClass: (id, cls) => {
+                const el = document.getElementById(id);
+                if (el) el.classList.add(cls);
+            },
+            removeClass: (id, cls) => {
+                const el = document.getElementById(id);
+                if (el) el.classList.remove(cls);
+            },
+            toggleClass: (id, cls) => {
+                const el = document.getElementById(id);
+                if (el) el.classList.toggle(cls);
+            },
+            focus: (id) => {
+                const el = document.getElementById(id);
+                if (el) setTimeout(() => el.focus(), 50);
+            },
+            scrollToBottom: (id) => {
+                const el = document.getElementById(id);
+                if (el) el.scrollTop = el.scrollHeight;
+            },
+            appendLog: (id, text, colorCls) => {
+                const out = document.getElementById(id);
+                if (!out) return;
+                const line = document.createElement('div');
+                line.textContent = text;
+                line.className = colorCls;
+                out.appendChild(line);
+                out.scrollTop = out.scrollHeight;
+            },
+            getValue: (id) => {
+                const el = document.getElementById(id);
+                return el ? el.value : "";
+            },
+            setValue: (id, val) => {
+                const el = document.getElementById(id);
+                if (el) el.value = val;
+            },
+            // Helper for 3D Color
+            updateColor: (hex) => {
+                const color = new THREE.Color(hex);
+                particleGroup.children.forEach(child => {
+                    if (child.material) child.material.color = color;
+                });
+            }
+        };
+
+        // Debug logger
+        window.log = (msg) => console.log("Ruby:", msg);
+
+    </script>
+
+    <!-- CÓDIGO RUBY (El Cerebro) -->
+    <script type="text/ruby">
+        require 'js'
+
+        # --- Data Layer ---
+        PROJECTS = [
+            {
+                title: "Lorem Ipsum Project A",
+                stack: "Lorem | Ipsum | Dolor",
+                desc: "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam."
+            },
+            {
+                title: "Project Dolor Sit",
+                stack: "Sit | Amet | Consectetur",
+                desc: "Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident."
+            },
+            {
+                title: "Magna Aliqua App",
+                stack: "Magna | Aliqua | Ut",
+                desc: "Sed ut perspiciatis unde omnis iste natus error sit voluptatem accusantium doloremque laudantium, totam rem aperiam, eaque ipsa quae ab illo inventore."
+            }
+        ]
+
+        SKILLS = [
+            { category: "Lorem Group 1", items: ["Lorem", "Ipsum", "Dolor", "Sit", "Amet"] },
+            { category: "Lorem Group 2", items: ["Consectetur", "Adipiscing", "Elit", "Sed", "Do"] },
+            { category: "Lorem Group 3", items: ["Eiusmod", "Tempor", "Incididunt", "Ut", "Labore"] },
+            { category: "Lorem Group 4", items: ["Et", "Dolore", "Magna", "Aliqua", "Ut"] }
+        ]
+
+        # --- DOM Module (The Wrapper) ---
+        module DOM
+            def self.helper
+                JS.global[:domHelper]
+            end
+
+            def self.on_click(id)
+                el = JS.global[:document].call(:getElementById, id)
+                return unless el
+                # Add Event Listener with a Ruby Proc
+                el.call(:addEventListener, "click", ->(event) { yield })
+            end
+
+            def self.on_enter(id)
+                el = JS.global[:document].call(:getElementById, id)
+                return unless el
+                el.call(:addEventListener, "keypress", ->(event) {
+                    key = event[:key].to_s
+                    if key == "Enter"
+                        yield 
+                    end
+                })
+            end
+        end
+
+        # --- Router Module ---
+        module Router
+            @current_route = ""
+            ROUTES = ["home", "skills", "projects", "contact"]
+
+            def self.nav_link(text, route)
+                active = @current_route == route ? "text-cyber border-b-2 border-cyber shadow-[0_0_10px_rgba(34,211,238,0.5)]" : "text-slate-400 hover:text-white hover:bg-slate-800/50"
+                # Pure HTML, no onclick
+                "<button id='nav-btn-#{route}' class='#{active} px-4 py-2 transition-all duration-300 rounded-t tracking-widest'>#{text}</button>"
+            end
+
+            def self.render_nav
+                html = [
+                    nav_link("HOME", "home"),
+                    nav_link("SKILLS", "skills"),
+                    nav_link("PROJECTS", "projects"),
+                    nav_link("CONTACT", "contact")
+                ].join(" ")
+                DOM.helper.call(:setHtml, "nav-links", html)
+                
+                # RE-ATTACH LISTENERS after injecting HTML
+                # This is the "Total Control" part. Ruby finds the new buttons and hooks into them.
+                ROUTES.each do |r|
+                    DOM.on_click("nav-btn-#{r}") { navigate(r) }
+                end
+            end
+
+            def self.navigate(route)
+                @current_route = route
+                render_nav 
+
+                content = case route
+                when "home"
+                    <<-HTML
+                        <div class="text-center max-w-4xl mx-auto mt-20">
+                            <h2 class="text-7xl font-bold mb-4 text-transparent bg-clip-text bg-gradient-to-r from-cyber to-blue-600 animate-pulse tracking-tighter">
+                                TEST
+                            </h2>
+                            <p class="text-2xl text-slate-300 mb-12 font-mono border-r-4 border-cyber pr-4 inline-block animate-bounce">
+                                Full Stack Architect | WebAssembly Pioneer
+                            </p>
+                            <div class="p-6 border border-slate-700 bg-slate-900/80 rounded-xl shadow-[0_0_20px_rgba(34,211,238,0.1)] text-left font-mono text-sm leading-relaxed backdrop-blur-md mx-4 md:mx-0">
+                                <p class="text-cyber mb-2">> System.init(user: "Guest")</p>
+                                <p class="text-slate-400 mb-1">> Loading logic modules...</p>
+                                <p class="text-green-400 mb-4">> Connection established: Ruby WASM Runtime v3.2</p>
+                                <p class="text-white">
+                                    Hello. This site is a technical experiment just for fun. I am running Ruby 3.2 
+                                    directly in your browser (via WebAssembly) to calculate and control the 3D scene 
+                                    you see in the background. No servers, everything happens in your memory. 
+                                    If you are curious, open the terminal and hack the site's physics in real-time.
+                                </p>
+                            </div>
+                        </div>
+                    HTML
+                when "skills"
+                    items = SKILLS.map do |s|
+                        <<-HTML
+                            <div class="p-6 border border-slate-700 bg-slate-900/80 rounded-lg hover:border-cyber transition-all duration-300 group shadow-lg">
+                                <h3 class="text-cyber text-xl mb-4 font-bold border-b border-slate-700 pb-2 group-hover:border-cyber">#{s[:category]}</h3>
+                                <div class="flex flex-wrap gap-2">
+                                    #{s[:items].map { |i| "<span class='px-3 py-1 bg-slate-800 rounded-full text-xs text-slate-300 border border-slate-700 group-hover:border-cyber/50'>#{i}</span>" }.join}
+                                </div>
+                            </div>
+                        HTML
+                    end.join
+                    <<-HTML
+                        <div class="w-full max-w-5xl mx-auto mt-10">
+                            <h2 class="text-4xl font-bold text-white mb-8 text-center tracking-widest">SKILL_MATRIX</h2>
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+                                #{items}
+                            </div>
+                        </div>
+                    HTML
+                when "projects"
+                    items = PROJECTS.map.with_index do |p, i|
+                        <<-HTML
+                            <div class="flex flex-col p-8 border-l-4 border-cyber bg-slate-900/80 mb-6 w-full rounded-r-lg hover:bg-slate-800/80 transition-all transform hover:-translate-x-2">
+                                <div class="flex justify-between items-baseline mb-4">
+                                    <h3 class="text-2xl font-bold text-white">#{p[:title]}</h3>
+                                    <span class="text-xs text-cyber border border-cyber px-2 py-1 rounded font-bold tracking-widest">#{p[:stack]}</span>
+                                </div>
+                                <p class="text-slate-400 text-sm leading-relaxed">#{p[:desc]}</p>
+                            </div>
+                        HTML
+                    end.join
+                    <<-HTML
+                        <div class="w-full max-w-4xl flex flex-col mt-10">
+                            <h2 class="text-4xl font-bold text-white mb-8 text-center tracking-widest">DEPLOYED_PROJECTS</h2>
+                            #{items}
+                        </div>
+                    HTML
+                when "contact"
+                    <<-HTML
+                        <div class="text-center p-12 border border-slate-700 bg-slate-900/80 rounded-2xl max-w-2xl mx-auto mt-20 shadow-2xl">
+                            <h3 class="text-4xl text-white mb-6 font-bold">Contact</h3>
+                            <p class="text-slate-400 mb-10 text-lg">
+                                Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.
+                            </p>
+                            <a href="mailto:TEST@example.com" class="inline-block px-10 py-4 bg-cyber text-dark font-bold text-xl rounded hover:bg-white hover:scale-105 transition-all duration-300 shadow-[0_0_15px_rgba(34,211,238,0.6)]">
+                                LOREM IPSUM
+                            </a>
+                        </div>
+                    HTML
+                else
+                    "<h1>404 - Neural Link Broken</h1>"
+                end
+
+                DOM.helper.call(:setHtml, "main-content", content)
+            end
+        end
+
+        # --- Terminal Controller ---
+        class Terminal
+            def initialize(god_mode)
+                @god_mode = god_mode
+                @visible = false
+                setup_listeners
+            end
+
+            def setup_listeners
+                # Toggle Button (Footer)
+                DOM.on_click("term-toggle-btn") { toggle }
+                
+                # Close Button (Modal)
+                DOM.on_click("term-close-btn") { toggle }
+
+                # Input Enter Key
+                DOM.on_enter("term-input") { process_input }
+            end
+
+            def toggle
+                DOM.helper.call(:toggleClass, "terminal-wrapper", "hidden")
+                @visible = !@visible
+                if @visible
+                    DOM.helper.call(:focus, "term-input")
+                end
+            end
+
+            def process_input
+                val = DOM.helper.call(:getValue, "term-input").to_s.strip
+                return if val.empty?
+
+                DOM.helper.call(:appendLog, "term-output", "➜ #{val}", "text-slate-300")
+                DOM.helper.call(:setValue, "term-input", "")
+
+                begin
+                    result = @god_mode.instance_eval(val)
+                    DOM.helper.call(:appendLog, "term-output", "=> #{result}", "text-green-400")
+                rescue => e
+                    DOM.helper.call(:appendLog, "term-output", "Error: #{e.message}", "text-red-400")
+                end
+            end
+        end
+
+        # --- God Mode (Logic) ---
+        class GodMode
+            def initialize(engine)
+                @engine = engine
+            end
+
+            def chaos
+                @engine.speed = 2.0
+                @engine.damping = 0.2
+                "⚠️ CHAOS MODE ENGAGED ⚠️"
+            end
+
+            def calm
+                @engine.speed = 0.1
+                @engine.damping = 0.05
+                color("#22d3ee") # Reset to Cyan
+                "Systems Normalized."
+            end
+
+            def speed=(val)
+                @engine.speed = val.to_f
+                "Speed set to #{val}"
+            end
+
+            def color(hex)
+                DOM.helper.call(:updateColor, hex)
+                "Color sequence initiated: #{hex}"
+            end
+
+            # Allow method_missing to handle undefined commands gracefully or just inspect
+            def inspect
+                "#<GodMode: Available commands: chaos, calm, speed=N, color 'hex'>"
+            end
+        end
+
+        # --- Physics Engine & Animation Loop ---
+        class Engine
+            attr_accessor :speed, :damping
+
+            def initialize
+                @rot_x = 0.0
+                @rot_y = 0.0
+                
+                # Physics constants (Now adjustable)
+                @damping = 0.05
+                @speed = 0.1
+
+                # REPL Interface
+                @god_mode = GodMode.new(self)
+                # Removed expose_repl as Terminal now handles this directly
+
+                # Optimization: Pre-allocate the lambda to avoid GC pressure (stuttering)
+                @render_loop = ->(time) { tick }
+            end
+
+            def god_mode
+                @god_mode
+            end
+
+            def tick
+                # Read mouse from JS (The "Puppeteer" reading the strings)
+                mouse = JS.global[:mouse]
+                mx = mouse[:x].to_f
+                my = mouse[:y].to_f
+
+                # Physics Logic:
+                # We want the network to rotate slowly on its own (Time based).
+                # And tilt based on mouse position.
+                
+                time = Time.now.to_f
+                
+                # Base continuous rotation (Using dynamic speed)
+                base_rotation = time * @speed
+                
+                # Target rotation influenced by mouse
+                # Mouse X affects Y rotation, Mouse Y affects X rotation
+                target_x = my * 0.5
+                target_y = mx * 0.5
+                
+                # Smooth interpolation (Lerp) for the mouse influence
+                # current += (target - current) * damping
+                @rot_x += (target_x - @rot_x) * @damping
+                @rot_y += (target_y - @rot_y) * @damping
+                
+                # Combine base rotation with mouse tilt
+                final_x = @rot_x
+                final_y = base_rotation + @rot_y
+                
+                # Order the JS Body to render
+                JS.global.call(:renderFrame, final_x, final_y)
+                
+                # Recursion: Request next frame
+                # Optimization: Reuse the pre-allocated lambda
+                JS.global.call(:requestAnimationFrame, @render_loop)
+            end
+        end
+
+        # --- Boot Sequence ---
+        puts "Ruby Core Online."
+        
+        # Initialize Router
+        Router.navigate("home")
+        
+        # Start Engine
+        engine = Engine.new
+        
+        # Initialize Terminal (Total Control)
+        terminal = Terminal.new(engine.god_mode)
+
+        # Start Loop
+        engine.tick
+    </script>
+</body>
+</html>
